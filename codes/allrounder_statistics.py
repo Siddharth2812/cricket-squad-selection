@@ -2,31 +2,30 @@ import pandas as pd
 from collections import defaultdict
 import numpy as np
 
-class AllRounderProcessor:
+class CricketAllRounderAnalyzer:
     def __init__(self):
         self.players = defaultdict(lambda: {
             # Batting stats
-            'bat_matches': set(),
-            'bat_innings': set(),
+            'matches': set(),
+            'innings': defaultdict(lambda: defaultdict(int)),
             'total_runs': 0,
-            'total_balls_faced': 0,
-            'total_fours': 0,
-            'total_sixes': 0,
+            'total_balls': 0,
+            'fours': 0,
+            'sixes': 0,
             'fifties': 0,
             'hundreds': 0,
             'dismissals': 0,
-            'bat_opponents': set(),
+            'opponents': set(),
             'venues': set(),
             'bat_teams': defaultdict(set),
             
             # Bowling stats
             'bowl_matches': set(),
-            'bowl_innings': set(),
-            'total_overs': 0,
+            'total_overs': 0.0,
             'total_runs_given': 0,
             'total_wickets': 0,
             'total_maidens': 0,
-            'total_dot_balls': 0,
+            'current_over': defaultdict(lambda: {'balls': 0, 'runs': 0}),
             'bowl_opponents': set(),
             'bowl_teams': defaultdict(set),
             
@@ -37,221 +36,284 @@ class AllRounderProcessor:
             
             # Per-match tracking
             'match_stats': defaultdict(lambda: {
-                'runs': 0,
-                'balls_faced': 0,
-                'fours': 0,
-                'sixes': 0,
-                'overs': 0,
-                'runs_given': 0,
-                'wickets': 0,
-                'maidens': 0,
+                'bat': {'runs': 0, 'balls': 0, '4s': 0, '6s': 0, 'sr': 0},
+                'bowl': {'overs': 0, 'runs': 0, 'wickets': 0, 'maidens': 0, 'econ': 0},
                 'result': None
             })
         })
         
-        self.match_info = defaultdict(lambda: {
+        self.matches = defaultdict(lambda: {
             'teams': set(),
             'winner': None,
-            'venue': 'Unknown'
+            'venue': None,
+            'innings': defaultdict(dict)
         })
 
-    def preprocess_matches(self, df):
-        """Determine match results and venues"""
-        match_groups = df.groupby('match_id')
-        for match_id, match_df in match_groups:
-            teams = set(match_df['batting_team'].unique())
-            inning_scores = {}
+    def _preprocess_matches(self, df):
+        """Analyze match outcomes and store context"""
+        for match_id, match_df in df.groupby('match_id'):
+            innings_data = {}
+            teams = set()
             
-            # Get scores for each inning
+            # Process innings
             for inning, inning_df in match_df.groupby('inning'):
-                total_runs = inning_df['total_runs'].sum()
                 batting_team = inning_df['batting_team'].iloc[0]
-                inning_scores[inning] = {'team': batting_team, 'runs': total_runs}
+                total_runs = inning_df['total_runs'].sum()
+                teams.add(batting_team)
+                innings_data[inning] = {'team': batting_team, 'runs': total_runs}
             
             # Determine match result
             winner = None
-            if len(inning_scores) >= 2:
-                team1 = inning_scores[1]['team']
-                score1 = inning_scores[1]['runs']
-                team2 = inning_scores[2]['team']
-                score2 = inning_scores[2]['runs']
-                winner = team1 if score1 > score2 else team2 if score2 > score1 else None
+            if len(innings_data) >= 2:
+                first_inn = innings_data[1]['runs']
+                second_inn = innings_data[2]['runs']
+                winner = innings_data[1]['team'] if first_inn > second_inn else innings_data[2]['team'] if second_inn > first_inn else None
             
-            self.match_info[match_id] = {
+            # Store match info
+            self.matches[match_id] = {
                 'teams': teams,
                 'winner': winner,
-                'venue': 'Unknown'  # Add venue extraction if available
+                'venue': match_df['venue'].iloc[0] if 'venue' in match_df.columns else 'Unknown',
+                'innings': innings_data
             }
 
-    def process_ball(self, row):
-        """Process each ball for both batting and bowling stats"""
-        match_id = row['match_id']
+    def _process_batting(self, row):
         batter = row['batter']
+        match_id = row['match_id']
+        inning = row['inning']
+        player = self.players[batter]
+        
+        # Update basic info
+        player['matches'].add(match_id)
+        player['opponents'].add(row['bowling_team'])
+        player['venues'].add(self.matches[match_id]['venue'])
+        player['bat_teams'][match_id].add(row['batting_team'])
+        
+        # Update batting stats
+        runs = int(row['batsman_runs'])
+        extras_type = str(row['extras_type']).lower()
+        
+        if extras_type in {'', 'noballs'}:
+            player['total_runs'] += runs
+            player['total_balls'] += 1
+            player['innings'][match_id][inning] += runs
+            
+            # Update per-match stats
+            player['match_stats'][match_id]['bat']['runs'] += runs
+            player['match_stats'][match_id]['bat']['balls'] += 1
+            
+            # Update boundaries
+            if runs == 4:
+                player['fours'] += 1
+                player['match_stats'][match_id]['bat']['4s'] += 1
+            if runs == 6:
+                player['sixes'] += 1
+                player['match_stats'][match_id]['bat']['6s'] += 1
+        
+        # Handle dismissals
+        if row['is_wicket'] == 1 and row['player_dismissed'] == batter:
+            player['dismissals'] += 1
+            inning_runs = player['innings'][match_id][inning]
+            if inning_runs >= 100:
+                player['hundreds'] += 1
+            elif inning_runs >= 50:
+                player['fifties'] += 1
+
+    def _process_bowling(self, row):
         bowler = row['bowler']
-        player_team = row['batting_team']
-        opponent_team = row['bowling_team']
+        match_id = row['match_id']
+        over = int(row['over'])
+        player = self.players[bowler]
         
-        # Batting processing
-        if batter != 'NA':
-            p = self.players[batter]
-            p['bat_matches'].add(match_id)
-            p['bat_innings'].add(f"{match_id}_{row['inning']}")
-            p['bat_opponents'].add(opponent_team)
-            p['venues'].add(self.match_info[match_id]['venue'])
-            p['bat_teams'][match_id].add(player_team)
-            
-            # Update batting stats
-            runs = int(row['batsman_runs'])
-            extras_type = row['extras_type'] if pd.notna(row['extras_type']) else ''
-            
-            if extras_type in ['', 'noballs']:
-                p['total_runs'] += runs
-                p['total_balls_faced'] += 1
-                p['match_stats'][match_id]['runs'] += runs
-                p['match_stats'][match_id]['balls_faced'] += 1
-                
-                if runs == 4:
-                    p['total_fours'] += 1
-                    p['match_stats'][match_id]['fours'] += 1
-                if runs == 6:
-                    p['total_sixes'] += 1
-                    p['match_stats'][match_id]['sixes'] += 1
-
-            # Handle dismissals
-            if row['is_wicket'] == 1 and row['player_dismissed'] == batter:
-                p['dismissals'] += 1
-                match_runs = p['match_stats'][match_id]['runs']
-                if match_runs >= 100:
-                    p['hundreds'] += 1
-                elif match_runs >= 50:
-                    p['fifties'] += 1
-
-        # Bowling processing
-        if bowler != 'NA':
-            p = self.players[bowler]
-            p['bowl_matches'].add(match_id)
-            p['bowl_innings'].add(f"{match_id}_{row['inning']}")
-            p['bowl_opponents'].add(player_team)
-            p['bowl_teams'][match_id].add(opponent_team)
-            
-            # Update bowling stats
-            total_runs = int(row['total_runs'])
-            extras_type = row['extras_type'] if pd.notna(row['extras_type']) else ''
-            
-            p['total_runs_given'] += total_runs
-            p['match_stats'][match_id]['runs_given'] += total_runs
-            
-            if extras_type != 'wides':
-                p['total_overs'] += 1/6
-                p['match_stats'][match_id]['overs'] += 1/6
-                
-            # Track wickets
-            if row['is_wicket'] == 1 and pd.notna(row['player_dismissed']):
-                p['total_wickets'] += 1
-                p['match_stats'][match_id]['wickets'] += 1
-
-            # Track maidens (simplified implementation)
-            if total_runs == 0 and extras_type not in ['wides', 'noballs']:
-                p['total_dot_balls'] += 1
-                if p['match_stats'][match_id]['overs'] % 1 == 0:  # Complete over
-                    p['total_maidens'] += 1
-                    p['match_stats'][match_id]['maidens'] += 1
-
-    def calculate_final_stats(self):
-        """Calculate all required parameters"""
-        results = []
+        # Update basic info
+        player['bowl_matches'].add(match_id)
+        player['bowl_opponents'].add(row['batting_team'])
+        player['bowl_teams'][match_id].add(row['bowling_team'])
         
-        for player, stats in self.players.items():
+        # Process bowling figures
+        total_runs = int(row['total_runs'])
+        extras_type = str(row['extras_type']).lower()
+        
+        player['total_runs_given'] += total_runs
+        over_key = (match_id, over)
+        
+        # Track valid deliveries
+        if extras_type != 'wides':
+            player['current_over'][over_key]['balls'] += 1
+            player['current_over'][over_key]['runs'] += total_runs
+            
+            # Check for completed over
+            if player['current_over'][over_key]['balls'] == 6:
+                player['total_overs'] += 1
+                if player['current_over'][over_key]['runs'] == 0:
+                    player['total_maidens'] += 1
+                del player['current_over'][over_key]
+        
+        # Track wickets
+        if row['is_wicket'] == 1 and row['dismissal_kind'] in {'bowled', 'caught', 'lbw', 'stumped'}:
+            player['total_wickets'] += 1
+        
+        # Update per-match stats
+        player['match_stats'][match_id]['bowl']['runs'] += total_runs
+        player['match_stats'][match_id]['bowl']['wickets'] += 1 if row['is_wicket'] == 1 else 0
+
+    def _calculate_results(self):
+        """Determine match outcomes for each player"""
+        for player, data in self.players.items():
+            for match_id in data['matches'].union(data['bowl_matches']):
+                teams = data['bat_teams'][match_id].union(data['bowl_teams'][match_id])
+                winner = self.matches[match_id]['winner']
+                
+                if winner in teams:
+                    data['wins'] += 1
+                elif winner is None:
+                    data['draws'] += 1
+                else:
+                    data['losses'] += 1
+
+    def generate_stats(self):
+        """Generate final dataframe with all 45 columns including player details"""
+        stats = []
+        
+        for player_name, data in self.players.items():
             # Skip players with no data
-            if not stats['bat_matches'] and not stats['bowl_matches']:
+            if not data['matches'] and not data['bowl_matches']:
                 continue
                 
-            # Match results calculation
-            total_matches = len(stats['bat_matches'].union(stats['bowl_matches']))
-            wins = sum(1 for match_id in stats['bat_matches'].union(stats['bowl_matches']) 
-                      if self.match_info[match_id]['winner'] in 
-                      (stats['bat_teams'][match_id].union(stats['bowl_teams'][match_id])))
+            # Calculate totals
+            total_matches = len(data['matches'].union(data['bowl_matches']))
+            total_innings = sum(len(innings) for innings in data['innings'].values())
             
-            losses = total_matches - wins - stats['draws']
-            
-            # Batting parameters
+            # Get last match IDs safely
+            last_bat_match = max(data['matches']) if data['matches'] else None
+            last_bowl_match = max(data['bowl_matches']) if data['bowl_matches'] else None
+
+            # Batting parameters with player name
             batting_stats = {
-                'Player': player,
-                'T.RAB': stats['total_runs'],
-                'TBF': stats['total_balls_faced'],
-                'T.50': stats['fifties'],
-                'T.100': stats['hundreds'],
-                'T.4': stats['total_fours'],
-                'T.6': stats['total_sixes'],
-                'Avg.RAB': stats['total_runs'] / len(stats['bat_matches']) if stats['bat_matches'] else 0,
-                'Avg.BF': stats['total_balls_faced'] / len(stats['bat_matches']) if stats['bat_matches'] else 0,
-                'Avg.SR': (stats['total_runs'] / stats['total_balls_faced'] * 100) if stats['total_balls_faced'] > 0 else 0,
-                'RF.50': stats['fifties'] / len(stats['bat_matches']) if stats['bat_matches'] else 0,
-                'RF.100': stats['hundreds'] / len(stats['bat_matches']) if stats['bat_matches'] else 0,
+                'Player': player_name,
+                'X(RAB)': data['total_runs'],
+                'x(Bowl)': data['total_balls'],
+                'T.RAB': data['total_runs'],
+                'TBF': data['total_balls'],
+                'T(50)': data['fifties'],
+                'T(100)': data['hundreds'],
+                'T(4s)': data['fours'],
+                'T(6s)': data['sixes'],
+                'Avg.Run': data['total_runs'] / max(1, data['dismissals']),
+                'Avg.SR': (data['total_runs'] / data['total_balls'] * 100) if data['total_balls'] else 0,
+                'RF(50s)': data['fifties'] / max(1, total_innings),
+                'RF(100s)': data['hundreds'] / max(1, total_innings),
+                'Avg.BF': data['total_balls'] / max(1, len(data['matches'])),
+                'Avg.RAB': data['total_runs'] / max(1, len(data['matches'])),
             }
+
+            # Get team info safely
+            team = 'N/A'
+            if data['bat_teams']:
+                bat_teams_values = next(iter(data['bat_teams'].values()), set())
+                if bat_teams_values:
+                    team = next(iter(bat_teams_values))
+            elif data['bowl_teams']:
+                bowl_teams_values = next(iter(data['bowl_teams'].values()), set())
+                if bowl_teams_values:
+                    team = next(iter(bowl_teams_values))
 
             # Bowling parameters
             bowling_stats = {
-                'T.over': round(stats['total_overs'], 1),
-                'T.Run.Given': stats['total_runs_given'],
-                'T.Wic': stats['total_wickets'],
-                'T.Mdn': stats['total_maidens'],
-                'T.ECN': stats['total_runs_given'] / stats['total_overs'] if stats['total_overs'] > 0 else 0,
-                'Avg.over': stats['total_overs'] / len(stats['bowl_matches']) if stats['bowl_matches'] else 0,
-                'Avg.Run.Given': stats['total_runs_given'] / len(stats['bowl_matches']) if stats['bowl_matches'] else 0,
-                'Avg.Wic': stats['total_wickets'] / len(stats['bowl_matches']) if stats['bowl_matches'] else 0,
-                'Avg.Mdn': stats['total_maidens'] / len(stats['bowl_matches']) if stats['bowl_matches'] else 0,
-                'Avg.ECN': (stats['total_runs_given'] / stats['total_overs']) / len(stats['bowl_matches']) 
-                           if stats['total_overs'] > 0 and stats['bowl_matches'] else 0,
+                'T.over': round(data['total_overs'], 1),
+                'T.Run.Given': data['total_runs_given'],
+                'T.Wic': data['total_wickets'],
+                'T.Mdn': data['total_maidens'],
+                'T.ECN': data['total_runs_given'] / data['total_overs'] if data['total_overs'] else 0,
+                'Avg.over': data['total_overs'] / max(1, len(data['bowl_matches'])),
+                'Avg.Run.Given': data['total_runs_given'] / max(1, len(data['bowl_matches'])),
+                'Avg.Wic': data['total_wickets'] / max(1, len(data['bowl_matches'])),
+                'Avg.Mdn': data['total_maidens'] / max(1, len(data['bowl_matches'])),
+                'Avg.ECN': (data['total_runs_given'] / data['total_overs']) if data['total_overs'] else 0,
             }
 
-            # Combined parameters
-            combined_stats = {
-                'T.Win': wins,
-                'T.Loss': losses,
-                'Win%': (wins / total_matches * 100) if total_matches > 0 else 0,
-                'Loss%': (losses / total_matches * 100) if total_matches > 0 else 0,
-                'Unique.OP': len(stats['bat_opponents'].union(stats['bowl_opponents'])),
-                'Venues': len(stats['venues']),
-                'Matches': total_matches
+            # Match results and context
+            result_stats = {
+                'Team': team,
+                'W': data['wins'],
+                'L': data['losses'],
+                'D': data['draws'],
+                'T.Win': data['wins'],
+                'T.Loss': data['losses'],
+                'Win(in percent)': (data['wins'] / total_matches * 100) if total_matches else 0,
+                'Loss(in percent)': (data['losses'] / total_matches * 100) if total_matches else 0,
+                'Avg.Win': data['wins'] / max(1, total_matches),
+                'Avg.loss': data['losses'] / max(1, total_matches),
+                'x(OP)': list(data['opponents'])[-1] if data['opponents'] else 'N/A',
+                'x(VNU)': list(data['venues'])[-1] if data['venues'] else 'N/A',
+                'x(W/L)': 'W' if data['wins'] > data['losses'] else 'L' if data['losses'] > 0 else 'D'
             }
 
-            # Merge all stats
-            final_stats = {**batting_stats, **bowling_stats, **combined_stats}
-            results.append(final_stats)
+            # Combine all stats
+            final_stats = {
+                **batting_stats,
+                **bowling_stats,
+                **result_stats,
+                # Per-match stats
+                'x(SR)': (data['match_stats'][last_bat_match]['bat']['runs'] / 
+                         data['match_stats'][last_bat_match]['bat']['balls'] * 100) 
+                         if last_bat_match and data['match_stats'][last_bat_match]['bat']['balls'] else 0,
+                'x(4)': data['match_stats'][last_bat_match]['bat']['4s'] if last_bat_match else 0,
+                'x(6)': data['match_stats'][last_bat_match]['bat']['6s'] if last_bat_match else 0,
+                'x(Over)': data['match_stats'][last_bowl_match]['bowl']['overs'] 
+                          if last_bowl_match else 0,
+                'x(Run)': data['match_stats'][last_bowl_match]['bowl']['runs'] 
+                         if last_bowl_match else 0,
+                'X(Wic)': data['match_stats'][last_bowl_match]['bowl']['wickets'] 
+                         if last_bowl_match else 0,
+                'x(Mdn)': data['match_stats'][last_bowl_match]['bowl']['maidens'] 
+                         if last_bowl_match else 0,
+                'x(ECN)': (data['match_stats'][last_bowl_match]['bowl']['runs'] / 
+                          data['match_stats'][last_bowl_match]['bowl']['overs']) 
+                          if last_bowl_match and data['match_stats'][last_bowl_match]['bowl']['overs'] else 0
+            }
 
-        return pd.DataFrame(results)
+            stats.append(final_stats)
 
-def process_allrounder_data(input_file, output_file):
-    """Process data and generate output file"""
-    try:
-        df = pd.read_csv(input_file)
-        processor = AllRounderProcessor()
+        return pd.DataFrame(stats)
+
+    def process_data(self, df):
+        """Main processing pipeline"""
+        self._preprocess_matches(df)
         
-        # Preprocess match information
-        processor.preprocess_matches(df)
-        
-        # Process each ball
-        df = df.sort_values(['match_id', 'inning', 'over', 'ball'])
         for _, row in df.iterrows():
-            processor.process_ball(row)
+            if row['batter'] != 'NA':
+                self._process_batting(row)
+            if row['bowler'] != 'NA':
+                self._process_bowling(row)
         
-        # Calculate and save results
-        result_df = processor.calculate_final_stats()
-        result_df.to_csv(output_file, index=False)
-        
-        print(f"All-rounder stats saved to {output_file}")
-        return result_df
+        self._calculate_results()
+        return self.generate_stats()
 
-    except Exception as e:
-        print(f"Error processing data: {str(e)}")
-        return None
-
+# Usage
 if __name__ == "__main__":
-    input_file = "../deliveries.csv"
-    output_file = "allrounder_stats.csv"
+    analyzer = CricketAllRounderAnalyzer()
+    df = pd.read_csv("../deliveries.csv")
+    result_df = analyzer.process_data(df)
     
-    df = process_allrounder_data(input_file, output_file)
-    if df is not None:
-        print("\nSample output:")
-        print(df.head()[['Player', 'T.RAB', 'T.Wic', 'Avg.RAB', 'Avg.Wic', 'Win%']])
+    # Ensure all columns exist
+    required_columns = [
+        'Player', 'Team', 'X(RAB)', 'x(Bowl)', 'x(SR)', 'x(4)', 'x(6)', 'x(OP)', 'x(VNU)', 'x(W/L)',
+        'T(50)', 'T(100)', 'T.RAB', 'TBF', 'Avg.Run', 'Avg.SR', 'RF(50s)', 'RF(100s)',
+        'L', 'W', 'D', 'x(Over)', 'x(Run)', 'X(Wic)', 'x(Mdn)', 'x(ECN)', 'T(4s)',
+        'T(6s)', 'T.over', 'T.Run.Given', 'T.Wic', 'T.Mdn', 'T.ECN', 'T.Win', 'T.Loss',
+        'Avg.RAB', 'Avg.BF', 'Avg.SR', 'Avg.over', 'Avg.Run.Given', 'Avg.Wic', 'Avg.Mdn',
+        'Avg.ECN', 'Avg.Win', 'Avg.loss', 'Win(in percent)', 'Loss(in percent)'
+    ]
+    
+    # Add missing columns with default values
+    for col in required_columns:
+        if col not in result_df.columns:
+            result_df[col] = np.nan
+            
+    # Order columns properly
+    result_df = result_df[required_columns]
+    
+    # Save with player details
+    result_df.to_csv("allrounder_performance.csv", index=False)
+    print(result_df[['Player', 'Team', 'X(RAB)', 'T.Wic', 'Win(in percent)']].head())
