@@ -1,0 +1,26 @@
+# Completed Work
+
+## 📂 Files Created  
+
+1. **IPL_Squad_Selection_README.md**  
+2. **Work_Progress.txt**  
+
+## 📊 Dataset Files (8 Excel Files)  
+
+3. **wicket_keeperset_smat.xlsx** – Player | Span | Mat | Inns | Dis | Ct | St | Ct Wk | Ct Fi | MD | D/I  
+4. **wicket_keeperset_ipl.xlsx** – Player | Mat | Inns | Dismissed | Ct | St | Max Dis Inns | Dis/Inn  
+5. **bowlerset_smat.xlsx** – Player | Span | Mat | Inns | Overs | Mdns | Runs | Wkts | BBI | Ave | Econ | SR | 4 | 5  
+6. **bowlerset_ipl.xlsx** – Player | Span | Mat | Inns | Overs | Mdns | Runs | Wkts | BBI | Ave | Econ | SR | 4 | 5  
+7. **batsmanset_smat.xlsx** – Player | Span | Mat | Inns | NO | Runs | HS | Ave | BF | SR | 100 | 50 | 0 | 4s | 6s  
+8. **batsamset_ipl.xlsx** – Player | Span | Mat | Inns | NO | Runs | HS | Ave | BF | SR | 100 | 50 | 0 | 4s | 6s  
+9. **allrounderset_smat.xlsx** – Player | Span | Mat | Runs | HS | Bat Av | 100 | Wkts | BBI | Bowl Av | 5 | Ct | St | Ave Diff  
+10. **allrounderset_ipl.xlsx** – Player | Span | Mat | Runs | HS | Bat Av | 100 | Wkts | BBI | Bowl Av | 5 | Ct | St | Ave Diff  
+
+# Next Steps  
+
+- Data preprocessing and cleaning  
+- Feature selection and engineering  
+- Model training and evaluation  
+- Squad selection optimization  
+- Integration with frontend/backend  
+- Create formula for consistency and form  
