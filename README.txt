@@ -6,8 +6,7 @@ Selecting the right squad is crucial for success in the **Indian Premier League 
 🎯 Key Features  
 ✅ Data-Driven Squad Selection – Analyze player stats, past performances, and match conditions.  
 ✅ AI-Powered Predictions – Use ML models (XGBoost, Random Forest, SVM, etc.) to predict player performance.  
-✅ Balanced Team Composition – Ensure a well-structured team with the right mix of batsmen, bowlers, and all-rounders.  
-✅ Pitch & Venue Adaptability – Consider pitch reports, venue history, and weather conditions for optimal selection.  
+✅ Balanced Team Composition – Ensure a well-structured team with the right mix of batsmen, bowlers, and all-rounders.   
 ✅ Real-Time Updates – Integrate real-time player form, injuries, and tournament dynamics.  
 
  🔍 How It Works  
